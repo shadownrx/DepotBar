@@ -34,6 +34,7 @@ Depot CI
 Updated just now
 Refresh now                  ⌘R
 Open Depot dashboard         ⌘D
+Set API Token…
 Launch at Login              ✓
 ------------------------------
 Quit DepotBar                ⌘Q
@@ -56,6 +57,7 @@ Click any workflow to open it on depot.dev. The menu bar icon itself tells the s
 - 🔄 **Auto-refresh** every 30 seconds, plus every time you open the menu
 - 🚀 **Launch at login**, with a menu toggle
 - 🔑 **Zero token setup** — reuses your Depot CLI login
+- 🎟️ **API token option** — paste a Depot API token once (stored in your Keychain); falls back to your Depot CLI login when no token is set
 - 👤 **Commit author in each row** — resolved from GitHub via your `gh` login (`@login`, or the raw commit name when unlinked); rows simply omit it when `gh` is missing or offline
 - 🪶 **Native & tiny** — Swift + AppKit, no dependencies, no Electron
 
@@ -76,10 +78,16 @@ cd DepotBar
 ```
 
 Requirements: macOS 14+, Xcode command line tools (`xcode-select --install`),
-and the Depot CLI logged in:
+and the Depot CLI installed:
 
 ```sh
-brew install depot/tap/depot && depot login
+brew install depot/tap/depot
+```
+
+Without Homebrew, use the installer script instead (pick a dir on your PATH):
+
+```sh
+curl -fsSL https://depot.dev/install-cli.sh | DEPOT_INSTALL_DIR="$HOME/.local/bin" sh
 ```
 
 Optional, for author names in each row:
@@ -90,14 +98,23 @@ brew install gh && gh auth login
 
 ## How auth works
 
-DepotBar shells out to `depot ci workflow list -n 5 -o json` and reuses the
-CLI's existing auth — there is no token to paste anywhere. The org for web
-links is read from the CLI's own settings (`DEPOT_ORG_ID` overrides it).
+DepotBar shells out to `depot ci workflow list -n 5 -o json`. Auth resolves
+in this order:
+
+1. `DEPOT_TOKEN` env var, when set.
+2. The API token saved via the menu (**Set API Token…**, stored in your
+   Keychain). Create one in your Depot Organization Settings → API Tokens.
+3. Otherwise the CLI's own login (`depot login`) — the previous behavior.
+
+So `depot login` is only needed when you use neither of the token options.
+The org for web links is read from the CLI's own settings
+(`DEPOT_ORG_ID` overrides it).
 
 ## Configuration
 
 | What | How |
 | ---- | --- |
+| API token | Menu → **Set API Token…** (Keychain), or `DEPOT_TOKEN` env var |
 | Org for links | `DEPOT_ORG_ID` env var, else the CLI's current org |
 | Logs | `/tmp/depotbar.log` |
 | Debug the menu without UI | `/Applications/DepotBar.app/Contents/MacOS/DepotBar --dump-menu` |
@@ -128,7 +145,10 @@ DepotBar/
 │   ├── Config.swift          # ~/.config/depotbar/config.json + themes
 │   ├── StatusIconArt.swift   # frosted-capsule icon (glass theme)
 │   ├── DepotClient.swift     # Depot CLI wrapper + workflow models
+│   ├── TokenStore.swift      # API token: Keychain storage + auth precedence
 │   └── MenuPresentation.swift# menu strings + --dump-menu debug mode
+├── Tests/DepotBarTests/
+│   └── TokenAuthTests.swift  # token precedence + child-process env
 ├── Resources/
 │   ├── Info.plist            # LSUIElement (menu-bar-only) bundle config
 │   └── AppIcon.icns
@@ -153,8 +173,13 @@ DepotBar is menu-bar-only (no Dock icon). Look at the right side of the menu
 bar for the ✓/✗ icon. If it's really missing, check `/tmp/depotbar.log`.
 
 **It says the Depot CLI was not found.**
-Install and log in: `brew install depot/tap/depot && depot login`, then
-relaunch DepotBar.
+Install it (`brew install depot/tap/depot`), then relaunch DepotBar. The CLI
+binary is still required — the token only replaces `depot login`.
+
+**Do I still need `depot login`?**
+Only if you don't set a token. Either paste an API token via
+**Set API Token…** or export `DEPOT_TOKEN`; both take precedence over the
+CLI login.
 
 **macOS says the app is from an unidentified developer.**
 Right-click `DepotBar.app` → Open → Open. Only needed once (ad-hoc signature).

@@ -107,6 +107,7 @@ enum MenuDump {
         let now = Date()
         do {
             let client = try DepotClient(count: 5)
+            print("auth: \(client.authSource)")
             let workflows = try await client.fetchWorkflows()
             print("theme: \(AppConfig.load().theme.rawValue) (config: \(AppConfig.fileURL.path))")
             print("menu-bar icon: \(MenuPresentation.statusIcon(workflows: workflows, isFetching: false, fetchStartedAt: nil, lastError: nil, spinnerIndex: 0))")

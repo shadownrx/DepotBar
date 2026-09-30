@@ -37,6 +37,7 @@ final class DepotBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var rowItems: [String: NSMenuItem] = [:]
     private var statusFooterItem: NSMenuItem?
     private var logHandle: FileHandle?
+    private var hasStoredToken = false
 
     // MARK: - Lifecycle
 
@@ -57,9 +58,10 @@ final class DepotBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.image = NSImage(systemSymbolName: "shippingbox", accessibilityDescription: "Depot CI")
         }
 
+        hasStoredToken = (try? KeychainTokenStorage().load()) != nil
         do {
             client = try DepotClient(count: 5)
-            log("Depot CLI: \(client!.cliPath) org=\(client!.orgID ?? "unknown")")
+            log("Depot CLI: \(client!.cliPath) org=\(client!.orgID ?? "unknown") auth=\(client!.authSource)")
         } catch {
             lastError = "Depot CLI not found. Install it: brew install depot/tap/depot"
             log("ERROR: depot CLI not found")
@@ -110,6 +112,20 @@ final class DepotBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var fetchTask: Task<Void, Never>?
 
     func refresh() {
+        // (Re)create the client lazily so installing the CLI — or saving a
+        // token — while the app is already running recovers on next refresh.
+        if client == nil {
+            do {
+                client = try DepotClient(count: 5)
+                lastError = nil
+                log("Depot CLI ready: \(client!.cliPath) org=\(client!.orgID ?? "unknown") auth=\(client!.authSource)")
+            } catch {
+                lastError = "Depot CLI not found. Install it: brew install depot/tap/depot"
+                log("ERROR: depot CLI not found")
+                rebuildMenu()
+                return
+            }
+        }
         guard let client, !isFetching else { return }
         isFetching = true
         fetchStartedAt = Date()
@@ -184,6 +200,16 @@ final class DepotBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let dashboardItem = NSMenuItem(title: "Open Depot dashboard", action: #selector(openDashboard(_:)), keyEquivalent: "d")
         dashboardItem.target = self
         menu.addItem(dashboardItem)
+
+        let tokenItem = NSMenuItem(title: "Set API Token…", action: #selector(promptForToken(_:)), keyEquivalent: "")
+        tokenItem.target = self
+        menu.addItem(tokenItem)
+
+        if hasStoredToken {
+            let removeTokenItem = NSMenuItem(title: "Remove API Token", action: #selector(removeToken(_:)), keyEquivalent: "")
+            removeTokenItem.target = self
+            menu.addItem(removeTokenItem)
+        }
 
         let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
         loginItem.target = self
@@ -299,6 +325,70 @@ final class DepotBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch {
             log("launch at login: toggle failed: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - API token
+
+    @objc private func promptForToken(_ sender: NSMenuItem) {
+        let alert = NSAlert()
+        alert.messageText = "Set Depot API Token"
+        alert.informativeText = "Create one in your Depot Organization Settings → API Tokens. "
+            + "It is stored in your Keychain and takes precedence over `depot login`."
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let token = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return }
+        do {
+            try KeychainTokenStorage().save(token)
+        } catch {
+            log("ERROR: couldn't save API token: \(error.localizedDescription)")
+            showError("Couldn't save the API token: \(error.localizedDescription)")
+            return
+        }
+        hasStoredToken = true
+        do {
+            client = try DepotClient(count: 5)
+            lastError = nil
+            log("API token saved to Keychain (auth=\(client!.authSource))")
+        } catch {
+            lastError = "Depot CLI not found. Install it: brew install depot/tap/depot"
+            log("API token saved, but \(lastError!)")
+        }
+        rebuildMenu()
+        refresh()
+    }
+
+    @objc private func removeToken(_ sender: NSMenuItem) {
+        do {
+            try KeychainTokenStorage().delete()
+        } catch {
+            log("ERROR: couldn't remove API token: \(error.localizedDescription)")
+            showError("Couldn't remove the API token: \(error.localizedDescription)")
+            return
+        }
+        hasStoredToken = false
+        do {
+            client = try DepotClient(count: 5)
+            lastError = nil
+            log("API token removed (auth=\(client!.authSource))")
+        } catch {
+            lastError = "Depot CLI not found. Install it: brew install depot/tap/depot"
+            log("API token removed, but \(lastError!)")
+        }
+        rebuildMenu()
+        refresh()
+    }
+
+    private func showError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "DepotBar"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     // MARK: - Logging
